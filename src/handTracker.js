@@ -1,0 +1,28 @@
+import { HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision'
+
+let handLandmarker = null
+
+export async function initHandTracker() {
+  const vision = await FilesetResolver.forVisionTasks(
+    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
+  )
+
+  handLandmarker = await HandLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+      delegate: 'GPU'
+    },
+    runningMode: 'VIDEO',
+    numHands: 1,
+    minHandDetectionConfidence: 0.7,
+    minHandPresenceConfidence: 0.7,
+    minTrackingConfidence: 0.7
+  })
+}
+
+export function detectHands(video) {
+  if (!handLandmarker || video.readyState < 2) return null
+  const now = performance.now()
+  return handLandmarker.detectForVideo(video, now)
+}
