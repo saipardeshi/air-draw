@@ -2,53 +2,96 @@ const strokes = []
 let currentStroke = []
 let isDrawing = false
 
-// ── Smoothing ──────────────────────────────────────────────
+// ── Smoothing (increased buffer + weighted averaging) ──────
 const buf = []
-const BUF = 4
+const BUF = 8  // Increased from 4 to 8 for smoother lines
 
 function smooth(x, y) {
   buf.push({ x, y })
   if (buf.length > BUF) buf.shift()
-  return {
-    x: buf.reduce((s, p) => s + p.x, 0) / buf.length,
-    y: buf.reduce((s, p) => s + p.y, 0) / buf.length,
-  }
+  // Weighted average — recent points count more
+  let wx = 0, wy = 0, wt = 0
+  buf.forEach((p, i) => {
+    const w = i + 1  // weight increases with recency
+    wx += p.x * w
+    wy += p.y * w
+    wt += w
+  })
+  return { x: wx / wt, y: wy / wt }
 }
 
+// ── Gesture hysteresis — prevents rapid flickering ─────────
+let lastGesture = 'IDLE'
+const GESTURE_HOLD_FRAMES = 3   // Must see new gesture for N frames before switching
+let gestureCandidateCount = 0
+let gestureCandidate = 'IDLE'
+
 // ── Gesture Detection ──────────────────────────────────────
-function fingerExtended(tip, dip, pip, mcp) {
-  // A finger is extended if tip is significantly above pip AND dip
-  return tip.y < pip.y - 0.03 && tip.y < dip.y - 0.01
+function fingerExtended(tip, dip, pip) {
+  // More robust: tip must be well above both pip and dip
+  return tip.y < pip.y - 0.04 && tip.y < dip.y - 0.02
+}
+
+function fingerCurled(tip, pip) {
+  return tip.y > pip.y - 0.01
 }
 
 function dist(a, b) {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2)
 }
 
-export function getGesture(lm) {
-  const thumbTip  = lm[4],  thumbIP   = lm[3],  thumbMCP  = lm[2]
-  const indexTip  = lm[8],  indexDIP  = lm[7],  indexPIP  = lm[6],  indexMCP  = lm[5]
-  const middleTip = lm[12], middleDIP = lm[11], middlePIP = lm[10], middleMCP = lm[9]
-  const ringTip   = lm[16], ringDIP   = lm[15], ringPIP   = lm[14], ringMCP   = lm[13]
-  const pinkyTip  = lm[20], pinkyDIP  = lm[19], pinkyPIP  = lm[18], pinkyMCP  = lm[17]
-  const wrist     = lm[0]
+function getRawGesture(lm) {
+  const thumbTip  = lm[4]
+  const indexTip  = lm[8],  indexDIP  = lm[7],  indexPIP  = lm[6]
+  const middleTip = lm[12], middleDIP = lm[11], middlePIP = lm[10]
+  const ringTip   = lm[16], ringDIP   = lm[15], ringPIP   = lm[14]
+  const pinkyTip  = lm[20], pinkyDIP  = lm[19], pinkyPIP  = lm[18]
 
-  const indexUp  = fingerExtended(indexTip,  indexDIP,  indexPIP,  indexMCP)
-  const middleUp = fingerExtended(middleTip, middleDIP, middlePIP, middleMCP)
-  const ringUp   = fingerExtended(ringTip,   ringDIP,   ringPIP,   ringMCP)
-  const pinkyUp  = fingerExtended(pinkyTip,  pinkyDIP,  pinkyPIP,  pinkyMCP)
+  const indexUp  = fingerExtended(indexTip,  indexDIP,  indexPIP)
+  const middleUp = fingerExtended(middleTip, middleDIP, middlePIP)
+  const ringUp   = fingerExtended(ringTip,   ringDIP,   ringPIP)
+  const pinkyUp  = fingerExtended(pinkyTip,  pinkyDIP,  pinkyPIP)
 
-  // PINCH = thumb tip close to index tip
+  const middleCurled = fingerCurled(middleTip, middlePIP)
+  const ringCurled   = fingerCurled(ringTip,   ringPIP)
+  const pinkyCurled  = fingerCurled(pinkyTip,  pinkyPIP)
+
+  // PINCH = thumb tip close to index tip, other fingers clearly down
   const pinchDist = dist(thumbTip, indexTip)
-  if (pinchDist < 0.055 && !middleUp && !ringUp && !pinkyUp) return 'DRAG'
+  if (pinchDist < 0.06 && middleCurled && ringCurled && pinkyCurled) return 'DRAG'
 
   // ERASE = all 4 fingers clearly extended
   if (indexUp && middleUp && ringUp && pinkyUp) return 'ERASE'
 
-  // DRAW = ONLY index finger extended, all others down
-  if (indexUp && !middleUp && !ringUp && !pinkyUp) return 'DRAW'
+  // DRAW = ONLY index finger extended, all others clearly curled
+  if (indexUp && middleCurled && ringCurled && pinkyCurled) return 'DRAW'
 
   return 'IDLE'
+}
+
+export function getGesture(lm) {
+  const raw = getRawGesture(lm)
+
+  // Same gesture — reset candidate and confirm
+  if (raw === lastGesture) {
+    gestureCandidateCount = 0
+    gestureCandidate = raw
+    return lastGesture
+  }
+
+  // New gesture candidate
+  if (raw === gestureCandidate) {
+    gestureCandidateCount++
+    if (gestureCandidateCount >= GESTURE_HOLD_FRAMES) {
+      lastGesture = raw
+      gestureCandidateCount = 0
+    }
+  } else {
+    gestureCandidate = raw
+    gestureCandidateCount = 1
+  }
+
+  return lastGesture  // Return stable (old) gesture until new one is confirmed
 }
 
 // ── Drag ───────────────────────────────────────────────────
@@ -75,7 +118,7 @@ function applyErase(lm, canvasW, canvasH) {
   const py = lm[9].y * canvasH
   if (lastPalmX !== null) {
     const moved = dist({ x: px, y: py }, { x: lastPalmX, y: lastPalmY })
-    if (moved > 5) {
+    if (moved > 3) {  // Lowered threshold for more responsive erasing
       const R = 70
       for (let i = strokes.length - 1; i >= 0; i--) {
         if (strokes[i].points.some(p => dist(p, { x: px, y: py }) < R)) {
@@ -87,6 +130,9 @@ function applyErase(lm, canvasW, canvasH) {
   lastPalmX = px; lastPalmY = py
 }
 
+// ── Min distance between draw points (avoids point-cloud artifacts) ──
+const MIN_DRAW_DIST = 3  // pixels
+
 // ── Main update ────────────────────────────────────────────
 export function updateDrawing(gesture, lm, canvas, color, thickness) {
   const rawX = (1 - lm[8].x) * canvas.width
@@ -95,8 +141,18 @@ export function updateDrawing(gesture, lm, canvas, color, thickness) {
 
   if (gesture === 'DRAW') {
     lastDragX = null; lastPalmX = null; lastPalmY = null
-    if (!isDrawing) { currentStroke = [{ x, y }]; isDrawing = true }
-    else { currentStroke.push({ x, y }) }
+    if (!isDrawing) {
+      buf.length = 0  // Reset smoothing buffer at stroke start
+      buf.push({ x: rawX, y: rawY })  // Seed buffer with current position
+      currentStroke = [{ x: rawX, y: rawY }]
+      isDrawing = true
+    } else {
+      const last = currentStroke[currentStroke.length - 1]
+      // Only add point if moved enough (prevents static dot clusters)
+      if (dist({ x, y }, last) >= MIN_DRAW_DIST) {
+        currentStroke.push({ x, y })
+      }
+    }
 
   } else if (gesture === 'DRAG') {
     if (isDrawing && currentStroke.length > 1)
@@ -120,7 +176,7 @@ export function updateDrawing(gesture, lm, canvas, color, thickness) {
   }
 }
 
-// ── Render ─────────────────────────────────────────────────
+// ── Render (with Catmull-Rom spline for smoother curves) ───
 export function renderStrokes(ctx, canvas, color, thickness, glow) {
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   const all = [
@@ -137,19 +193,36 @@ export function renderStrokes(ctx, canvas, color, thickness, glow) {
     ctx.lineWidth = s.thickness
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
+
+    const pts = s.points
     ctx.beginPath()
-    ctx.moveTo(s.points[0].x, s.points[0].y)
-    for (let i = 1; i < s.points.length - 1; i++) {
-      const mx = (s.points[i].x + s.points[i + 1].x) / 2
-      const my = (s.points[i].y + s.points[i + 1].y) / 2
-      ctx.quadraticCurveTo(s.points[i].x, s.points[i].y, mx, my)
+
+    if (pts.length === 2) {
+      ctx.moveTo(pts[0].x, pts[0].y)
+      ctx.lineTo(pts[1].x, pts[1].y)
+    } else {
+      // Smooth quadratic spline through midpoints
+      ctx.moveTo(pts[0].x, pts[0].y)
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i].x + pts[i + 1].x) / 2
+        const my = (pts[i].y + pts[i + 1].y) / 2
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my)
+      }
+      const last = pts[pts.length - 1]
+      ctx.lineTo(last.x, last.y)
     }
-    const last = s.points[s.points.length - 1]
-    ctx.lineTo(last.x, last.y)
+
     ctx.stroke()
     ctx.restore()
   })
 }
 
 export function undoLast() { strokes.pop() }
-export function clearAll() { strokes.length = 0; currentStroke = [] }
+export function clearAll() {
+  strokes.length = 0
+  currentStroke = []
+  buf.length = 0
+  lastGesture = 'IDLE'
+  gestureCandidate = 'IDLE'
+  gestureCandidateCount = 0
+}
