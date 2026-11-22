@@ -1,16 +1,43 @@
-# React + Vite
+# Air Draw
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Draw in the air with your hand. Your webcam sees your hand, and a hand-tracking model
+([MediaPipe](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker)) turns finger
+poses into drawing actions. Everything runs in your browser; no video leaves your computer.
 
-Currently, two official plugins are available:
+## Run it
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+npm install
+npm run dev      # then open the printed URL (http://localhost:5173) and allow the camera
+```
 
-## React Compiler
+Needs an internet connection the first time: the hand-tracking model and fonts load from a CDN.
+The camera only works on `localhost` or HTTPS.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Gestures
 
-## Expanding the ESLint configuration
+| Pose | Action |
+| --- | --- |
+| ☝️ Index finger up, other fingers curled | **Draw** |
+| 🤏 Pinch thumb + index (other fingers curled) | **Drag**: move the whole drawing |
+| 🖐️ Open palm | **Erase** strokes inside the pink circle |
+| ✊ Fist / anything else | **Idle** |
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+The side panel changes color, thickness and glow, and has Undo and Clear.
+"Show finger debug" displays which fingers the app thinks are up. Use it if a gesture won't register.
+
+## How the code is organized
+
+| File | Job |
+| --- | --- |
+| `src/App.jsx` | Starts the camera and the tracker, runs the per-frame loop, holds UI state |
+| `src/handTracker.js` | Loads the MediaPipe model (GPU first, CPU fallback) |
+| `src/gestures.js` | Hand points → DRAW / DRAG / ERASE / IDLE (thresholds at the top; tune here) |
+| `src/drawingEngine.js` | Strokes: drawing, smoothing, dragging, erasing, rendering |
+| `src/skeleton.js` | Draws the hand outline on the canvas |
+| `src/components/` | Control panel, gesture guide, debug panel |
+| `src/constants.js` | Colors and gesture labels |
+
+## Scripts
+
+`npm run dev` · `npm run build` · `npm run preview` · `npm run lint`
