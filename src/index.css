@@ -1,11 +1,40 @@
-* {
+:root {
+  --font-title: 'Syne', system-ui, sans-serif;
+  --font-mono: 'Space Mono', ui-monospace, monospace;
+  --glass: rgba(8, 8, 12, 0.82);
+  --glass-light: rgba(0, 0, 0, 0.55);
+  --border: rgba(255, 255, 255, 0.09);
+  --text: #fff;
+  --text-dim: rgba(255, 255, 255, 0.6);
+  --text-faint: rgba(255, 255, 255, 0.35);
+  --good: #00ff88;
+  --warn: #facc15;
+  --bad: #ff2d78;
+}
+
+*, *::before, *::after {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
+html, body, #root {
+  height: 100%;
+}
+
 body {
   background: #000;
+  color: var(--text);
   overflow: hidden;
-  font-family: sans-serif;
+  font-family: var(--font-mono);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
